@@ -3,6 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="ResuMatch.ai", version="1.0")
 
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "ResuMatch backend is running"}
+
+# ...followed by your TailorRequest, TailorResponse, and tailor_resume() code
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # tighten later to your domain
@@ -44,3 +50,4 @@ def tailor_resume(req: TailorRequest):
             f"Sincerely,\nYour Name"
         )
     return TailorResponse(summary=summary, improved_resume=improved, cover_letter=cover)
+    
