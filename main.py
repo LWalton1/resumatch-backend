@@ -1,53 +1,114 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional, List
+from openai import OpenAI
+import os
 
-app = FastAPI(title="ResuMatch.ai", version="1.0")
+app = FastAPI(title="ResuMatch.ai")
 
-@app.get("/")
-def root():
-    return {"status": "ok", "message": "ResuMatch backend is running"}
-
-# ...followed by your TailorRequest, TailorResponse, and tailor_resume() code
-
+# ✅ CORS setup
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten later to your domain
+    allow_origins=["*"],  # later replace with frontend URL
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ✅ Health check
 @app.get("/")
-def home():
+def health():
     return {"status": "ok", "message": "ResuMatch backend is running"}
-from pydantic import BaseModel
-from typing import Optional
 
+# ✅ OpenAI client
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+# ✅ AI-powered resume tailoring
 class TailorRequest(BaseModel):
     resume_text: str
     job_text: str
     target_title: Optional[str] = None
     tone: Optional[str] = "Professional"
     instructions: Optional[str] = ""
-    generate_cover_letter: Optional[bool] = True
+
+class TailoredSection(BaseModel):
+    heading: str
+    bullets: List[str]
 
 class TailorResponse(BaseModel):
     summary: str
     improved_resume: str
-    cover_letter: Optional[str]
+    cover_letter: str
+    sections: List[TailoredSection]
+
+SYSTEM_PROMPT = """You are ResuMatch.ai, a senior resume writer.
+Rules:
+- Rewrite to fit the job description precisely.
+- Keep facts from the candidate, but rephrase for impact and clarity.
+- Prefer action verbs, outcomes, and quantified metrics (%, $, time).
+- Remove redundancies and irrelevant details.
+- Mirror the job’s vocabulary when truthful.
+- Output concise, scannable bullets.
+"""
 
 @app.post("/api/tailor", response_model=TailorResponse)
 def tailor_resume(req: TailorRequest):
-    resume = req.resume_text.lower()
-    job = req.job_text.lower()
-    common = [w for w in job.split() if w in resume]
-    summary = f"Tailored resume for {req.target_title or 'target role'} with tone '{req.tone}'."
-    improved = f"Optimized resume includes {len(common)} matched job keywords."
-    cover = None
-    if req.generate_cover_letter:
-        cover = (
-            f"Dear Hiring Manager,\n\nI am excited to apply for the {req.target_title or 'role'}. "
-            f"My experience aligns with your requirements, especially in {', '.join(common[:10])}.\n\n"
-            f"Sincerely,\nYour Name"
-        )
-    return TailorResponse(summary=summary, improved_resume=improved, cover_letter=cover)
-    
+    role = req.target_title or "the target role"
+    prompt = f"""
+Target Title: {role}
+Tone: {req.tone}
+Extra Instructions: {req.instructions}
+
+Job Description:
+{req.job_text}
+
+Candidate Resume:
+{req.resume_text}
+
+Tasks:
+1) Write a 2–3 sentence summary tailored to the job.
+2) Provide a short “improved resume notes” paragraph (what changed & why).
+3) Draft a one-page cover letter (3–5 short paragraphs).
+4) Provide 3–5 sections with improved bullet points (JSON only).
+"""
+
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "TailorResponse",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "summary": {"type": "string"},
+                        "improved_resume": {"type": "string"},
+                        "cover_letter": {"type": "string"},
+                        "sections": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "heading": {"type": "string"},
+                                    "bullets": {"type": "array", "items": {"type": "string"}}
+                                },
+                                "required": ["heading", "bullets"]
+                            }
+                        }
+                    },
+                    "required": ["summary", "improved_resume", "cover_letter", "sections"],
+                    "additionalProperties": False
+                },
+                "strict": True
+            }
+        },
+        temperature=0.5,
+    )
+
+    parsed = response.output_parsed
+    return TailorResponse(**parsed)
+
