@@ -1,5 +1,6 @@
 fastapi
 uvicorn[standard]
-pydantic
-openai
+pydantic>=1.10,<3
+openai>=1.40.0
+
 
