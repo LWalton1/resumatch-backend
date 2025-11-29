@@ -3,6 +3,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 from openai import OpenAI
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.middleware import SlowAPIMiddleware
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+# limit the AI endpoint to, say, 20/min per IP
+@app.post("/api/tailor")
+@limiter.limit("20/minute")
+def tailor_resume(req: TailorRequest):
+    ...
 import os
 
 app = FastAPI(title="ResuMatch.ai")
