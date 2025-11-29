@@ -20,16 +20,6 @@ app.add_middleware(
 def health():
     return {"status": "ok", "message": "ResuMatch backend is running"}
 
-import os
-
-@app.get("/check-key")
-def check_key():
-    key = os.environ.get("OPENAI_API_KEY")
-    if not key:
-        return {"status": "missing", "message": "OPENAI_API_KEY not found in environment"}
-    return {"status": "ok", "key_starts_with": key[:7] + "..."}
-
-
 # ✅ OpenAI client
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
