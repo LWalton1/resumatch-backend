@@ -7,10 +7,11 @@ import os
 
 app = FastAPI(title="ResuMatch.ai")
 
-# ✅ CORS setup
+FRONTEND_ORIGIN = "https://resumatch-frontend-lwatlon.onrender.com"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # later replace with frontend URL
+    allow_origins=[FRONTEND_ORIGIN],
     allow_methods=["*"],
     allow_headers=["*"],
 )
