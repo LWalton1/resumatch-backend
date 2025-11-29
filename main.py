@@ -1,38 +1,23 @@
-from fastapi import Request
+# --- imports (top) ---
+import os, json
+from typing import Optional, List
+
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, List
+
 from openai import OpenAI
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from slowapi.middleware import SlowAPIMiddleware
-import os
+from pydantic import BaseModel
 
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-app.add_middleware(SlowAPIMiddleware)
-
-# limit the AI endpoint to, say, 20/min per IP
-@app.post("/api/tailor")
-@limiter.limit("20/minute")
-def tailor_resume(req: TailorRequest):
-    ...
-
+# --- app first ---
 app = FastAPI(title="ResuMatch.ai")
 
-# Rate limiting setup
-limiter = Limiter(key_func=get_remote_address, enabled=True)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(SlowAPIMiddleware)
-
-FRONTEND_ORIGIN = "https://resumatch-frontend-lwatlon.onrender.com"
-
+# --- CORS next (optional but recommended) ---
+FRONTEND_ORIGIN = "*"  # replace with your frontend URL when ready
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[FRONTEND_ORIGIN],
@@ -40,15 +25,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ Health check
+# --- RATE LIMITING: only after app exists ---
+limiter = Limiter(key_func=get_remote_address, enabled=True)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+# --- health check ---
 @app.get("/")
 def health():
     return {"status": "ok", "message": "ResuMatch backend is running"}
 
-# ✅ OpenAI client
+# --- (optional) key check ---
+@app.get("/check-key")
+def check_key():
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        return {"status": "missing", "message": "OPENAI_API_KEY not found"}
+    return {"status": "ok", "key_starts_with": key[:7] + "..."}
+
+# --- OpenAI client ---
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# ✅ AI-powered resume tailoring
+# --- models & schema for tailor endpoint ---
 class TailorRequest(BaseModel):
     resume_text: str
     job_text: str
@@ -69,19 +68,16 @@ class TailorResponse(BaseModel):
 SYSTEM_PROMPT = """You are ResuMatch.ai, a senior resume writer.
 Rules:
 - Rewrite to fit the job description precisely.
-- Keep facts from the candidate, but rephrase for impact and clarity.
+- Keep facts; do not invent employers, dates, or certifications.
 - Prefer action verbs, outcomes, and quantified metrics (%, $, time).
 - Remove redundancies and irrelevant details.
 - Mirror the job’s vocabulary when truthful.
 - Output concise, scannable bullets.
 """
 
-@app.post("/api/tailor", response_model=TailorResponse)
-@limiter.limit("20/minute")   # or "5/minute" while testing
-def tailor_resume(req: TailorRequest, request: Request):
-    ...
+def _user_prompt(req: TailorRequest) -> str:
     role = req.target_title or "the target role"
-    prompt = f"""
+    return f"""
 Target Title: {role}
 Tone: {req.tone}
 Extra Instructions: {req.instructions}
@@ -93,49 +89,69 @@ Candidate Resume:
 {req.resume_text}
 
 Tasks:
-1) Write a 2–3 sentence summary tailored to the job.
-2) Provide a short “improved resume notes” paragraph (what changed & why).
-3) Draft a one-page cover letter (3–5 short paragraphs).
-4) Provide 3–5 sections with improved bullet points (JSON only).
+1) 2–3 sentence summary tailored to the job.
+2) Short "improved resume notes" (what changed & why).
+3) One-page cover letter (3–5 short paragraphs).
+4) 3–5 sections with improved bullet points (JSON only).
 """
 
-    response = client.responses.create(
-        model="gpt-4o-mini",
-        input=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "TailorResponse",
-                "schema": {
+JSON_SCHEMA = {
+    "name": "TailorResponse",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "improved_resume": {"type": "string"},
+            "cover_letter": {"type": "string"},
+            "sections": {
+                "type": "array",
+                "items": {
                     "type": "object",
                     "properties": {
-                        "summary": {"type": "string"},
-                        "improved_resume": {"type": "string"},
-                        "cover_letter": {"type": "string"},
-                        "sections": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "heading": {"type": "string"},
-                                    "bullets": {"type": "array", "items": {"type": "string"}}
-                                },
-                                "required": ["heading", "bullets"]
-                            }
-                        }
+                        "heading": {"type": "string"},
+                        "bullets": {"type": "array", "items": {"type": "string"}, "minItems": 2}
                     },
-                    "required": ["summary", "improved_resume", "cover_letter", "sections"],
-                    "additionalProperties": False
+                    "required": ["heading", "bullets"]
                 },
-                "strict": True
+                "minItems": 3
             }
         },
-        temperature=0.5,
-    )
+        "required": ["summary", "improved_resume", "cover_letter", "sections"],
+        "additionalProperties": False
+    },
+    "strict": True
+}
 
-    parsed = response.output_parsed
-    return TailorResponse(**parsed)
-
+# --- AI endpoint WITH rate limit & Request param ---
+@app.post("/api/tailor", response_model=TailorResponse)
+@limiter.limit("20/minute")
+def tailor_resume(req: TailorRequest, request: Request):
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user",   "content": _user_prompt(req)},
+    ]
+    try:
+        resp = client.responses.create(
+            model="gpt-4o-mini",
+            input=messages,
+            response_format={"type": "json_schema", "json_schema": JSON_SCHEMA},
+            temperature=0.5,
+        )
+        if hasattr(resp, "output_parsed") and resp.output_parsed:
+            return TailorResponse(**resp.output_parsed)
+        if hasattr(resp, "output_text") and resp.output_text:
+            import json as _json
+            return TailorResponse(**_json.loads(resp.output_text))
+    except Exception:
+        # Fallback to Chat Completions JSON mode
+        try:
+            chat = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.5,
+            )
+            import json as _json
+            return TailorResponse(**_json.loads(chat.choices[0].message.content))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"AI error: {type(e).__name__}: {e}")
