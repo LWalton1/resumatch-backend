@@ -1,3 +1,8 @@
+from fastapi import Request
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -19,6 +24,12 @@ def tailor_resume(req: TailorRequest):
     ...
 
 app = FastAPI(title="ResuMatch.ai")
+
+# Rate limiting setup
+limiter = Limiter(key_func=get_remote_address, enabled=True)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 FRONTEND_ORIGIN = "https://resumatch-frontend-lwatlon.onrender.com"
 
@@ -66,7 +77,9 @@ Rules:
 """
 
 @app.post("/api/tailor", response_model=TailorResponse)
-def tailor_resume(req: TailorRequest):
+@limiter.limit("20/minute")   # or "5/minute" while testing
+def tailor_resume(req: TailorRequest, request: Request):
+    ...
     role = req.target_title or "the target role"
     prompt = f"""
 Target Title: {role}
