@@ -2,6 +2,8 @@ fastapi
 uvicorn[standard]
 pydantic>=1.10,<3
 openai>=1.40.0
-slowapi
+slowapi==0.1.8
+limits>=3.0
+
 
 
