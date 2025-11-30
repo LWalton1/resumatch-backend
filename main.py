@@ -13,6 +13,11 @@ from slowapi.middleware import SlowAPIMiddleware
 from openai import OpenAI
 from pydantic import BaseModel
 
+from docx import Document
+from pdfminer.high_level import extract_text as pdf_extract_text
+import io
+
+
 # --- app first ---
 app = FastAPI(title="ResuMatch.ai")
 
@@ -68,6 +73,38 @@ class TailorResponse(BaseModel):
     improved_resume: str
     cover_letter: str
     sections: List[TailoredSection]
+
+# ---------- Resume file parsing helpers ----------
+
+def _docx_to_text(file_bytes: bytes) -> str:
+    f = io.BytesIO(file_bytes)
+    doc = Document(f)
+    return "\n".join([p.text for p in doc.paragraphs])
+
+def _pdf_to_text(file_bytes: bytes) -> str:
+    f = io.BytesIO(file_bytes)
+    return pdf_extract_text(f)
+
+@app.post("/api/parse-resume")
+def parse_resume(file: UploadFile = File(...)):
+    name = (file.filename or "").lower()
+    content = file.file.read()
+    try:
+        if name.endswith(".docx"):
+            text = _docx_to_text(content)
+        elif name.endswith(".pdf"):
+            text = _pdf_to_text(content)
+        elif name.endswith(".txt"):
+            text = content.decode("utf-8", errors="ignore")
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported file type. Please upload a PDF, DOCX, or TXT file."
+            )
+        # Safety cap in case someone uploads a huge resume
+        return {"text": text[:200000]}
+    finally:
+        file.file.close()
 
 SYSTEM_PROMPT = """You are ResuMatch.ai, a senior resume writer.
 Rules:
