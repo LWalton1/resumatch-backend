@@ -36,7 +36,7 @@ app.add_middleware(SlowAPIMiddleware)
 def health():
     return {
         "status": "ok",
-        "message": "ResuMatch backend is running successfully!"
+        "message": "ResuMatch backend is running"
     }
 
 
