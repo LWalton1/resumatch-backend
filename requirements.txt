@@ -6,6 +6,8 @@ slowapi==0.1.8
 limits>=3.0
 python-docx
 pdfminer.six
+python-multipart
+
 
 
 
