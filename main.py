@@ -34,7 +34,10 @@ app.add_middleware(SlowAPIMiddleware)
 # --- health check ---
 @app.get("/")
 def health():
-    return {"status": "ok", "message": "ResuMatch backend is running"}
+    return {
+        "status": "ok",
+        "message": "ResuMatch backend is running successfully!"
+    }
 
 # --- (optional) key check ---
 @app.get("/check-key")
