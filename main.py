@@ -39,6 +39,7 @@ def health():
         "message": "ResuMatch backend is running successfully!"
     }
 
+
 # --- (optional) key check ---
 @app.get("/check-key")
 def check_key():
